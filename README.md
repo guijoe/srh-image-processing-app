@@ -1,6 +1,6 @@
 # Imaging Technologies Capstone Project: SRH ImageViewer
 
-Welcome to the SRH ImageViewer project! The goal of this project is to collaboratively build an image processing application. Each student will contribute by creating a personal "module" that adds new image processing capabilities to the main application.
+Welcome to the SRH Image Processing Capstone project! The goal of this project is to collaboratively build an image processing application. Each student will contribute by creating a personal "module" that adds new image processing capabilities to the main application.
 
 ![alt text](./assets/app.png)
 
@@ -8,9 +8,9 @@ This guide will walk you through setting up the project, creating your own modul
 
 ## Project Timeline
 
--   **Project Start:** Friday 27th February
--   **Contribution Deadline:** All pull requests must be created and submitted by **Thursday, 05th at 11.59pm**.
--   **Project Presentation:** Friday 06th March
+-   **Project Start:** Now
+-   **Project Deadline:** All pull requests must be created and submitted by **Tuesday, 16th at midnight (Group 1)** and **Wednesday, 17th at midnight (Group 2)**.
+-   **Project Presentations:** Wednesday 17th (Group 1), Thursday 18th (Group 2)
 
 ## 1. Project Setup
 

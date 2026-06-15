@@ -4,35 +4,46 @@ Course : Imaging Technologies
 Student: Maha Ibrahim | SRH University of Applied Sciences Berlin
 
 Transformations implemented (pure NumPy):
-  1. Histogram Equalization  → cat.jpg       (flat grayscale, reveals fur texture)
-  2. Contrast Stretching     → fullmoon.jpg  (overexposed/warm moon, reveals surface)
-  3. Laplacian Edge Enhance  → moon.jpg      (half-moon, sharpens crater rims)
-  4. Unsharp Mask (Sharpen)  → flowers.jpg   (magnolia petals + fine branch detail)
-  5. Median Filter           → statue.jpg    (very noisy low-light museum photo)
-  6. Grayscale Conversion    → portrait.jpg  (colorful autumn Berlin street)
+  1. Histogram Equalization  -> cat.jpg       (flat grayscale, reveals fur texture)
+  2. Contrast Stretching     -> fullmoon.jpg  (overexposed/warm moon, reveals surface)
+  3. Laplacian Edge Enhance  -> moon.jpg      (half-moon, sharpens crater rims)
+  4. Unsharp Mask (Sharpen)  -> flowers.jpg   (magnolia petals + fine branch detail)
+  5. Median Filter           -> statue.jpg    (very noisy low-light museum photo)
+  6. Grayscale Conversion    -> portrait.jpg  (colorful autumn Berlin street)
 """
 
 import numpy as np
+import imageio
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QLabel,
-    QDoubleSpinBox, QSpinBox, QComboBox,
+    QWidget, QVBoxLayout, QLabel, QComboBox, QStackedWidget,
+    QPushButton, QDoubleSpinBox, QSpinBox,
 )
+from PySide6.QtCore import Signal
 
-try:
-    from modules.i_image_module import IImageModule, BaseParamsWidget, NoParamsWidget
-except ImportError:
-    class IImageModule:
-        pass
-    class BaseParamsWidget(QWidget):
-        def get_params(self) -> dict:
-            return {}
-    class NoParamsWidget(BaseParamsWidget):
-        pass
+from modules.i_image_module import IImageModule
+from image_data_store import ImageDataStore
 
 
 # ===========================================================================
 # Parameter Widgets
 # ===========================================================================
+
+class BaseParamsWidget(QWidget):
+    def get_params(self) -> dict:
+        return {}
+
+
+class NoParamsWidget(BaseParamsWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(QLabel("No parameters needed."))
+        layout.addStretch()
+
+    def get_params(self) -> dict:
+        return {}
+
 
 class HistogramEqualizationParamsWidget(BaseParamsWidget):
     def __init__(self, parent=None):
@@ -133,14 +144,13 @@ class MedianFilterParamsWidget(BaseParamsWidget):
 # Core image processing functions  (pure NumPy)
 # ===========================================================================
 
-def _apply_per_channel(image: np.ndarray, func):
+def _apply_per_channel(image, func):
     if image.ndim == 2:
         return func(image)
     return np.stack([func(image[:, :, c]) for c in range(image.shape[2])], axis=2)
 
 
-# 1. Histogram Equalization
-def _equalize_channel(ch: np.ndarray) -> np.ndarray:
+def _equalize_channel(ch):
     ch = ch.astype(np.uint8)
     hist, _ = np.histogram(ch.flatten(), bins=256, range=(0, 256))
     cdf = hist.cumsum()
@@ -149,15 +159,16 @@ def _equalize_channel(ch: np.ndarray) -> np.ndarray:
     lut = np.round((cdf - cdf_min) / max(n - cdf_min, 1) * 255).astype(np.uint8)
     return lut[ch]
 
-def histogram_equalization(image: np.ndarray, mode: str = "Grayscale") -> np.ndarray:
-    """
-    Histogram Equalization (lecture slide 54).
-    Formula: s_i = cumul(i) / number_of_pixels * 255
-    """
+
+def histogram_equalization(image, mode="Grayscale"):
+    """Histogram Equalization (lecture slide 54). s_i = cumul(i)/N * 255"""
     orig_dtype = image.dtype
     if mode == "Per Channel (RGB)" and image.ndim == 3:
-        out = np.stack([_equalize_channel(image[:, :, c])
-                        for c in range(image.shape[2])], axis=2)
+        ch_count = min(3, image.shape[2])
+        chans = [_equalize_channel(image[:, :, c]) for c in range(ch_count)]
+        if image.shape[2] == 4:
+            chans.append(image[:, :, 3])
+        out = np.stack(chans, axis=2)
     else:
         if image.ndim == 3:
             gray = (0.2989 * image[:, :, 0].astype(float) +
@@ -170,14 +181,8 @@ def histogram_equalization(image: np.ndarray, mode: str = "Grayscale") -> np.nda
     return out.astype(orig_dtype)
 
 
-# 2. Contrast Stretching
-def contrast_stretching(image: np.ndarray,
-                        new_min: float = 0.0,
-                        new_max: float = 255.0) -> np.ndarray:
-    """
-    Linear Min-Max Contrast Stretching (lecture slide 49).
-    Formula: s = (r - curr_min) * (new_max - new_min) / (curr_max - curr_min) + new_min
-    """
+def contrast_stretching(image, new_min=0.0, new_max=255.0):
+    """Linear Min-Max Contrast Stretching (lecture slide 49)."""
     img_f = image.astype(float)
     c_min, c_max = img_f.min(), img_f.max()
     if c_max == c_min:
@@ -186,109 +191,101 @@ def contrast_stretching(image: np.ndarray,
     return np.clip(stretched, 0, 255).astype(image.dtype)
 
 
-# 3. Laplacian Edge Enhancement
-def laplacian_edge_enhancement(image: np.ndarray, blend: float = 0.5) -> np.ndarray:
-    """
-    Laplacian Edge Enhancement (lecture slides 70-72).
-    Kernel:  [ 0  1  0 ]
-             [ 1 -4  1 ]
-             [ 0  1  0 ]
-    Output = original - blend * laplacian(original)
-    """
-    kernel = np.array([[0,  1, 0],
-                       [1, -4, 1],
-                       [0,  1, 0]], dtype=float)
+def laplacian_edge_enhancement(image, blend=0.5):
+    """Laplacian Edge Enhancement (lecture slides 70-72)."""
+    kernel = np.array([[0, 1, 0], [1, -4, 1], [0, 1, 0]], dtype=float)
+
     def enhance(ch):
         ch_f = ch.astype(float)
         padded = np.pad(ch_f, 1, mode="reflect")
         lap = np.zeros_like(ch_f)
         for i in range(3):
             for j in range(3):
-                lap += kernel[i, j] * padded[i:i+ch_f.shape[0], j:j+ch_f.shape[1]]
+                lap += kernel[i, j] * padded[i:i + ch_f.shape[0], j:j + ch_f.shape[1]]
         return np.clip(ch_f - blend * lap, 0, 255)
+
     return _apply_per_channel(image, enhance).astype(image.dtype)
 
 
-# 4. Unsharp Mask (Sharpening)
-def _gaussian_kernel_1d(radius: int) -> np.ndarray:
+def _gaussian_kernel_1d(radius):
     size = 2 * radius + 1
     sigma = max(radius / 3.0, 0.5)
     x = np.arange(size) - radius
     k = np.exp(-(x ** 2) / (2 * sigma ** 2))
     return k / k.sum()
 
-def _gauss_blur(ch: np.ndarray, k1d: np.ndarray) -> np.ndarray:
+
+def _gauss_blur(ch, k1d):
     pad = len(k1d) // 2
     out = np.pad(ch, pad, mode="reflect")
-    row = sum(w * out[pad:-pad, i:i+ch.shape[1]] for i, w in enumerate(k1d))
+    row = sum(w * out[pad:-pad, i:i + ch.shape[1]] for i, w in enumerate(k1d))
     out2 = np.pad(row, pad, mode="reflect")
-    return sum(w * out2[i:i+ch.shape[0], pad:-pad] for i, w in enumerate(k1d))
+    return sum(w * out2[i:i + ch.shape[0], pad:-pad] for i, w in enumerate(k1d))
 
-def unsharp_mask(image: np.ndarray, strength: float = 1.5, radius: int = 3) -> np.ndarray:
-    """
-    Unsharp Mask Sharpening (derivative-based, lecture slide 63).
-    mask      = original - gaussian_blur(original)
-    sharpened = original + strength * mask
-    """
+
+def unsharp_mask(image, strength=1.5, radius=3):
+    """Unsharp Mask Sharpening (derivative-based, lecture slide 63)."""
     k1d = _gaussian_kernel_1d(radius)
+
     def sharpen(ch):
         f = ch.astype(float)
         return np.clip(f + strength * (f - _gauss_blur(f, k1d)), 0, 255)
+
     return _apply_per_channel(image, sharpen).astype(image.dtype)
 
 
-# 5. Median Filter
-def median_filter(image: np.ndarray, kernel_size: int = 3) -> np.ndarray:
-    """
-    Spatial Median Filter (lecture slide 57 — spatial neighbourhood).
-    Uses NumPy stride tricks for efficient sliding-window computation.
-    """
+def median_filter(image, kernel_size=3):
+    """Spatial Median Filter (lecture slide 57)."""
     k, pad = kernel_size, kernel_size // 2
+
     def med(ch):
         padded = np.pad(ch.astype(float), pad, mode="reflect")
         H, W = ch.shape
         windows = np.lib.stride_tricks.as_strided(
-            padded,
-            shape=(H, W, k, k),
-            strides=padded.strides + padded.strides
-        )
+            padded, shape=(H, W, k, k),
+            strides=padded.strides + padded.strides)
         return np.median(windows.reshape(H, W, k * k), axis=2)
+
     return np.clip(_apply_per_channel(image, med), 0, 255).astype(image.dtype)
 
 
-# 6. Grayscale Conversion
-def to_grayscale(image: np.ndarray) -> np.ndarray:
-    """
-    Grayscale Conversion using ITU-R BT.601 weights (lecture slide 37).
-    Y = 0.2989*R + 0.5870*G + 0.1140*B
-    """
+def to_grayscale(image):
+    """Grayscale Conversion using ITU-R BT.601 weights (lecture slide 37)."""
     if image.ndim == 2:
         return image
     gray = np.clip(
-        0.2989 * image[:,:,0].astype(float) +
-        0.5870 * image[:,:,1].astype(float) +
-        0.1140 * image[:,:,2].astype(float),
-        0, 255
+        0.2989 * image[:, :, 0].astype(float) +
+        0.5870 * image[:, :, 1].astype(float) +
+        0.1140 * image[:, :, 2].astype(float), 0, 255
     ).astype(image.dtype)
     return np.stack([gray, gray, gray], axis=2)
 
 
 # ===========================================================================
-# Controls Widget
+# Controls Widget  (matches Joel's working pattern)
 # ===========================================================================
 
 class MahaIbrahimControlsWidget(QWidget):
+    process_requested = Signal(dict)
 
-    def __init__(self, parent=None):
+    def __init__(self, module_manager, parent=None):
         super().__init__(parent)
-        self._setup_ui()
+        self.module_manager = module_manager
+        self.param_widgets = {}
+        self.setup_ui()
 
-    def _setup_ui(self):
+    def setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("<b>Maha Ibrahim Module</b>"))
+        layout.addWidget(QLabel("<h3>Maha Ibrahim - Control Panel</h3>"))
         layout.addWidget(QLabel("Operation:"))
-        self.combo = QComboBox()
-        self.operations = {
+
+        self.operation_selector = QComboBox()
+        layout.addWidget(self.operation_selector)
+
+        self.params_stack = QStackedWidget()
+        layout.addWidget(self.params_stack)
+
+        operations = {
             "Histogram Equalization":     HistogramEqualizationParamsWidget,
             "Contrast Stretching":        ContrastStretchingParamsWidget,
             "Laplacian Edge Enhancement": LaplacianParamsWidget,
@@ -296,46 +293,69 @@ class MahaIbrahimControlsWidget(QWidget):
             "Median Filter":              MedianFilterParamsWidget,
             "Grayscale Conversion":       NoParamsWidget,
         }
-        for name in self.operations:
-            self.combo.addItem(name)
-        layout.addWidget(self.combo)
-        self._params_area = QVBoxLayout()
-        layout.addLayout(self._params_area)
-        self._current_widget = None
-        self.combo.currentTextChanged.connect(self._swap_params)
-        self._swap_params(self.combo.currentText())
-        layout.addStretch()
 
-    def _swap_params(self, name: str):
-        if self._current_widget is not None:
-            self._params_area.removeWidget(self._current_widget)
-            self._current_widget.setParent(None)
-            self._current_widget.deleteLater()
-        self._current_widget = self.operations.get(name, NoParamsWidget)()
-        self._params_area.addWidget(self._current_widget)
+        for name, widget_class in operations.items():
+            widget = widget_class()
+            self.params_stack.addWidget(widget)
+            self.param_widgets[name] = widget
+            self.operation_selector.addItem(name)
 
-    def get_params(self) -> dict:
-        params = {"operation": self.combo.currentText()}
-        if self._current_widget:
-            params.update(self._current_widget.get_params())
-        return params
+        self.apply_button = QPushButton("Apply Processing")
+        layout.addWidget(self.apply_button)
+
+        self.apply_button.clicked.connect(self._on_apply_clicked)
+        self.operation_selector.currentTextChanged.connect(self._on_operation_changed)
+
+    def _on_apply_clicked(self):
+        operation_name = self.operation_selector.currentText()
+        active_widget = self.param_widgets[operation_name]
+        params = active_widget.get_params()
+        params["operation"] = operation_name
+        self.process_requested.emit(params)
+
+    def _on_operation_changed(self, operation_name):
+        if operation_name in self.param_widgets:
+            self.params_stack.setCurrentWidget(self.param_widgets[operation_name])
 
 
 # ===========================================================================
-# Main Module Class
+# Main Module Class  (matches IImageModule interface)
 # ===========================================================================
 
 class MahaIbrahimImageModule(IImageModule):
 
+    def __init__(self):
+        super().__init__()
+        self._controls_widget = None
+
     def get_name(self) -> str:
         return "Maha Ibrahim"
 
-    def get_controls_widget(self, parent=None) -> QWidget:
-        return MahaIbrahimControlsWidget(parent)
+    def get_supported_formats(self) -> list:
+        return ["png", "jpg", "jpeg", "bmp", "gif", "tif", "tiff"]
+
+    def create_control_widget(self, parent=None, module_manager=None) -> QWidget:
+        if self._controls_widget is None:
+            self._controls_widget = MahaIbrahimControlsWidget(module_manager, parent)
+            self._controls_widget.process_requested.connect(self._handle_processing_request)
+        return self._controls_widget
+
+    def _handle_processing_request(self, params: dict):
+        if self._controls_widget and self._controls_widget.module_manager:
+            self._controls_widget.module_manager.apply_processing_to_current_image(params)
+
+    def load_image(self, file_path: str):
+        try:
+            image_data = imageio.imread(file_path)
+            metadata = {"name": file_path.split("/")[-1]}
+            return True, image_data, metadata, None
+        except Exception as e:
+            print(f"Error loading image {file_path}: {e}")
+            return False, None, {}, None
 
     def process_image(self, image_data: np.ndarray,
                       metadata: dict, params: dict) -> np.ndarray:
-        op  = params.get("operation", "")
+        op = params.get("operation", "")
         img = image_data.copy()
 
         if op == "Histogram Equalization":

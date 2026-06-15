@@ -13,7 +13,7 @@ Transformations implemented (pure NumPy):
 """
 
 import numpy as np
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel,
     QDoubleSpinBox, QSpinBox, QComboBox,
 )

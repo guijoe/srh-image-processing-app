@@ -1,7 +1,7 @@
 import numpy as np
 import imageio
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QSlider, 
-                             QPushButton, QComboBox, QStackedWidget, QDoubleSpinBox)
+                             QPushButton, QComboBox, QStackedWidget)
 from PySide6.QtCore import Qt, Signal
 from modules.i_image_module import IImageModule
 
@@ -25,7 +25,6 @@ class ContrastParamsWidget(QWidget):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         
-        # New Minimum Target Slider
         self.min_label = QLabel("New Min Intensity (Target: 0):")
         layout.addWidget(self.min_label)
         self.min_slider = QSlider(Qt.Horizontal)
@@ -34,7 +33,6 @@ class ContrastParamsWidget(QWidget):
         self.min_slider.valueChanged.connect(self._on_min_changed)
         layout.addWidget(self.min_slider)
 
-        # New Maximum Target Slider
         self.max_label = QLabel("New Max Intensity (Target: 255):")
         layout.addWidget(self.max_label)
         self.max_slider = QSlider(Qt.Horizontal)
@@ -50,16 +48,50 @@ class ContrastParamsWidget(QWidget):
         self.max_label.setText(f"New Max Intensity (Target: {value}):")
         
     def get_params(self) -> dict:
-        return {
-            'new_min': self.min_slider.value(),
-            'new_max': self.max_slider.value()
-        }
+        return {'new_min': self.min_slider.value(), 'new_max': self.max_slider.value()}
+
+class SwirlParamsWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        
+        self.label = QLabel("Swirl Twist Strength (Factor: 0.0):")
+        layout.addWidget(self.label)
+        self.slider = QSlider(Qt.Horizontal)
+        self.slider.setRange(0, 100) # Re-mapped to 0.0 -> 10.0
+        self.slider.setValue(0)
+        self.slider.valueChanged.connect(self._on_value_changed)
+        layout.addWidget(self.slider)
+
+    def _on_value_changed(self, value):
+        self.label.setText(f"Swirl Twist Strength (Factor: {value / 10.0:.1f}):")
+        
+    def get_params(self) -> dict:
+        return {'strength': self.slider.value() / 10.0}
+
+class PixelateParamsWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        
+        self.label = QLabel("Pixel Block Size (1px - No Effect):")
+        layout.addWidget(self.label)
+        self.slider = QSlider(Qt.Horizontal)
+        self.slider.setRange(1, 32)
+        self.slider.setValue(1)
+        self.slider.valueChanged.connect(self._on_value_changed)
+        layout.addWidget(self.slider)
+
+    def _on_value_changed(self, value):
+        self.label.setText(f"Pixel Block Size ({value}px x {value}px):")
+        
+    def get_params(self) -> dict:
+        return {'block_size': self.slider.value()}
 
 class GaussianBlurParamsWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        
         self.label = QLabel("Blur Intensity (Sigma: 1.0):")
         layout.addWidget(self.label)
         self.slider = QSlider(Qt.Horizontal)
@@ -78,7 +110,6 @@ class SharpenParamsWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        
         self.label = QLabel("Sharpen Strength (Factor: 1.0):")
         layout.addWidget(self.label)
         self.slider = QSlider(Qt.Horizontal)
@@ -97,7 +128,6 @@ class SobelParamsWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        
         self.label = QLabel("Edge Thresholding (0 = Show All):")
         layout.addWidget(self.label)
         self.slider = QSlider(Qt.Horizontal)
@@ -134,10 +164,11 @@ class ILFControlsWidget(QWidget):
         self.params_stack = QStackedWidget()
         layout.addWidget(self.params_stack)
 
-        # Mapping operations to parameter widgets
         operations = {
             "Brightness Adjustment": BrightnessParamsWidget,
             "Contrast Stretching": ContrastParamsWidget,
+            "Swirl Distortion Filter": SwirlParamsWidget,
+            "Block Pixelation Filter": PixelateParamsWidget,
             "Dynamic Gaussian Blur": GaussianBlurParamsWidget,
             "Adjustable Sharpen Filter": SharpenParamsWidget,
             "Sobel Edge Detection": SobelParamsWidget
@@ -193,7 +224,6 @@ class IlfImageModule(IImageModule):
             image_data = imageio.imread(file_path)
             if image_data.ndim == 3:
                 image_data = np.mean(image_data, axis=2).astype(np.uint8)
-            
             metadata = {'name': file_path.split('/')[-1], 'type': 'Grayscale'}
             return True, image_data, metadata, None
         except Exception as e:
@@ -205,7 +235,7 @@ class IlfImageModule(IImageModule):
         k_h, k_w = kernel.shape
         pad_h, pad_w = k_h // 2, k_w // 2
         
-        padded_img = np.pad(image, ((pad_h, pad_h), (pad_w, pw) if 'pad_w' in locals() else (pad_w, pad_w)), mode='edge')
+        padded_img = np.pad(image, ((pad_h, pad_h), (pad_w, pad_w)), mode='edge')
         output = np.zeros_like(image, dtype=float)
         
         for i in range(img_h):
@@ -217,6 +247,7 @@ class IlfImageModule(IImageModule):
     def process_image(self, image_data: np.ndarray, metadata: dict, params: dict) -> np.ndarray:
         op = params.get('operation')
         img = image_data.astype(float)
+        h, w = img.shape
         
         if op == "Brightness Adjustment":
             val = params.get('value', 0)
@@ -225,16 +256,58 @@ class IlfImageModule(IImageModule):
         elif op == "Contrast Stretching":
             new_min = params.get('new_min', 0.0)
             new_max = params.get('new_max', 255.0)
-
             current_min = np.min(img)
             current_max = np.max(img)
-
-            # Prevent division by zero error for flat-color input images
             if current_max == current_min:
                 return image_data
-
-            # Apply normalization distribution mapping
             processed = (img - current_min) * ((new_max - new_min) / (current_max - current_min)) + new_min
+
+        elif op == "Swirl Distortion Filter":
+            strength = params.get('strength', 0.0)
+            if strength == 0.0:
+                return image_data
+            
+            processed = np.zeros_like(img)
+            cx, cy = w / 2.0, h / 2.0
+            # Maximum radius bounding limit setup
+            max_radius = np.sqrt(cx**2 + cy**2)
+            
+            for y in range(h):
+                for x in range(w):
+                    dx = x - cx
+                    dy = y - cy
+                    r = np.sqrt(dx**2 + dy**2)
+                    
+                    if r < max_radius:
+                        # Angle increases the closer it gets to the center point
+                        theta = strength * np.exp(-r / (max_radius / 3.0))
+                        current_angle = np.arctan2(dy, dx) + theta
+                        
+                        src_x = int(cx + r * np.cos(current_angle))
+                        src_y = int(cy + r * np.sin(current_angle))
+                        
+                        # Boundary clipping validation
+                        if 0 <= src_x < w and 0 <= src_y < h:
+                            processed[y, x] = img[src_y, src_x]
+                        else:
+                            processed[y, x] = img[y, x]
+                    else:
+                        processed[y, x] = img[y, x]
+
+        elif op == "Block Pixelation Filter":
+            block_size = params.get('block_size', 1)
+            if block_size <= 1:
+                return image_data
+            
+            processed = np.copy(img)
+            for y in range(0, h, block_size):
+                for x in range(0, w, block_size):
+                    # Bound slice windows inside spatial arrays cleanly
+                    y_end = min(y + block_size, h)
+                    x_end = min(x + block_size, w)
+                    
+                    block_mean = np.mean(img[y:y_end, x:x_end])
+                    processed[y:y_end, x:x_end] = block_mean
 
         elif op == "Dynamic Gaussian Blur":
             sigma = params.get('sigma', 1.0)
@@ -247,14 +320,13 @@ class IlfImageModule(IImageModule):
                     dy = y - center
                     kernel[x, y] = np.exp(-(dx**2 + dy**2) / (2 * sigma**2))
             kernel /= np.sum(kernel)
-            
             processed = self._manual_convolve(img, kernel)
 
         elif op == "Adjustable Sharpen Filter":
             factor = params.get('factor', 1.0)
             kernel = np.array([[ 0,       -factor,  0], 
                                [-factor, 1 + 4*factor, -factor], 
-                               [-0,       -factor,  0]])
+                               [ 0,       -factor,  0]])
             processed = self._manual_convolve(img, kernel)
 
         elif op == "Sobel Edge Detection":
@@ -265,7 +337,6 @@ class IlfImageModule(IImageModule):
             Gx = self._manual_convolve(img, Kx)
             Gy = self._manual_convolve(img, Ky)
             processed = np.sqrt(Gx**2 + Gy**2)
-            
             if threshold > 0:
                 processed = np.where(processed >= threshold, processed, 0.0)
         

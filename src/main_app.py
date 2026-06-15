@@ -1,9 +1,8 @@
 import sys
-from image_data_store import ImageDataStore
 from PySide6.QtWidgets import QApplication, QMessageBox
 from ui_components.main_window import MainWindow
 from module_manager import ModuleManager
-from modules.ilf.ilf_module import IlfImageModule
+
 # Global instance for easier access (e.g., from module's control widgets)
 module_manager_instance = ModuleManager()
 

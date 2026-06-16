@@ -82,15 +82,35 @@ def histogram_equalization(image: np.ndarray) -> np.ndarray:
     return _apply_per_channel(image, equalize_2d)
 
 
-def contrast_stretching(image: np.ndarray) -> np.ndarray:
-    """Stretch current min/max intensities to the full 0-255 range."""
+def contrast_stretching(
+    image: np.ndarray,
+    new_min: float = 0.0,
+    new_max: float = 255.0,
+) -> np.ndarray:
+    """
+    Contrast stretching with user-controlled output range.
+
+    Formula:
+        out = (pixel - old_min) / (old_max - old_min) * (new_max - new_min) + new_min
+
+    If new_min=0 and new_max=255, the image uses the full 8-bit intensity range.
+    Smaller output ranges make the image flatter; higher ranges make it brighter.
+    """
+    new_min = float(np.clip(new_min, 0, 255))
+    new_max = float(np.clip(new_max, 0, 255))
+    if new_max <= new_min:
+        new_max = min(255.0, new_min + 1.0)
+
     def stretch_2d(channel):
         channel = _as_float(channel)
-        min_val = channel.min()
-        max_val = channel.max()
-        if max_val == min_val:
-            return channel
-        return (channel - min_val) * (255.0 / (max_val - min_val))
+        old_min = channel.min()
+        old_max = channel.max()
+        if old_max == old_min:
+            return np.full_like(channel, new_min, dtype=np.float64)
+
+        normalized = (channel - old_min) / (old_max - old_min)
+        return normalized * (new_max - new_min) + new_min
+
     return _apply_per_channel(image, stretch_2d)
 
 
@@ -219,6 +239,39 @@ class NoParamsWidget(BaseParamsWidget):
         return {}
 
 
+class ContrastStretchParamsWidget(BaseParamsWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        layout.addWidget(QLabel("New Minimum Intensity (0-255):"))
+        self.new_min = QDoubleSpinBox()
+        self.new_min.setMinimum(0.0)
+        self.new_min.setMaximum(255.0)
+        self.new_min.setDecimals(2)
+        self.new_min.setSingleStep(1.0)
+        self.new_min.setValue(0.0)
+        layout.addWidget(self.new_min)
+
+        layout.addWidget(QLabel("New Maximum Intensity (0-255):"))
+        self.new_max = QDoubleSpinBox()
+        self.new_max.setMinimum(0.0)
+        self.new_max.setMaximum(255.0)
+        self.new_max.setDecimals(2)
+        self.new_max.setSingleStep(1.0)
+        self.new_max.setValue(255.0)
+        layout.addWidget(self.new_max)
+
+        layout.addStretch()
+
+    def get_params(self) -> dict:
+        return {
+            "new_min": self.new_min.value(),
+            "new_max": self.new_max.value(),
+        }
+
+
 class GammaParamsWidget(BaseParamsWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -344,7 +397,7 @@ class KenChegeControlsWidget(QWidget):
 
         operations = {
             "Histogram Equalization": NoParamsWidget,
-            "Contrast Stretching": NoParamsWidget,
+            "Contrast Stretching": ContrastStretchParamsWidget,
             "Gamma Correction": GammaParamsWidget,
             "Image Negative": NoParamsWidget,
             "Gaussian Blur": GaussianParamsWidget,
@@ -419,7 +472,11 @@ class KenChegeImageModule(IImageModule):
         if operation == "Histogram Equalization":
             return histogram_equalization(image_data)
         if operation == "Contrast Stretching":
-            return contrast_stretching(image_data)
+            return contrast_stretching(
+                image_data,
+                params.get("new_min", 0.0),
+                params.get("new_max", 255.0),
+            )
         if operation == "Gamma Correction":
             return gamma_correction(image_data, params.get("gamma", 1.0))
         if operation == "Image Negative":

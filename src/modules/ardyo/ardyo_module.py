@@ -114,61 +114,6 @@ class ardyoImageModule(IImageModule):
             return False, None, {}, None
 
     # ---------------------------------------------------------
-    # Manual convolution and Gaussian blur
-    # ---------------------------------------------------------
-
-    def _manual_convolution_2d(self, image_array, kernel):
-        input_float = image_array.astype(np.float32)
-
-        k_height, k_width = kernel.shape
-        pad_y = k_height // 2
-        pad_x = k_width // 2
-
-        padded = np.pad(
-            input_float,
-            ((pad_y, pad_y), (pad_x, pad_x)),
-            mode='edge'
-        )
-
-        height, width = input_float.shape
-        output = np.zeros((height, width), dtype=np.float32)
-
-        for ky in range(k_height):
-            for kx in range(k_width):
-                output += padded[ky:ky + height, kx:kx + width] * kernel[ky, kx]
-
-        return output
-
-    def _manual_convolution_rgb(self, image_array, kernel):
-        input_float = image_array.astype(np.float32)
-
-        if input_float.ndim == 2:
-            return self._manual_convolution_2d(input_float, kernel)
-
-        output = np.zeros_like(input_float, dtype=np.float32)
-
-        for i in range(3):
-            output[:, :, i] = self._manual_convolution_2d(input_float[:, :, i], kernel)
-
-        return np.clip(output, 0, 255)
-
-    def _manual_gaussian_blur_rgb(self, image_array, iterations=1):
-        gaussian_kernel = np.array([
-            [1, 2, 1],
-            [2, 4, 2],
-            [1, 2, 1]
-        ], dtype=np.float32)
-
-        gaussian_kernel = gaussian_kernel / np.sum(gaussian_kernel)
-
-        result = image_array.astype(np.float32).copy()
-
-        for _ in range(iterations):
-            result = self._manual_convolution_rgb(result, gaussian_kernel)
-
-        return np.clip(result, 0, 255)
-
-    # ---------------------------------------------------------
     # Vintage Film Look helper functions
     # ---------------------------------------------------------
 
@@ -242,11 +187,8 @@ class ardyoImageModule(IImageModule):
 
         rgb_image = rgb_image[:, :, :3]
 
-        # 1. Slightly soften the image using manual Gaussian blur
-        softened = self._manual_gaussian_blur_rgb(rgb_image, iterations=1)
-
-        # 2. Apply vintage color and aging effects
-        vintage_image = self._apply_sepia(softened)
+        # Apply vintage color and aging effects
+        vintage_image = self._apply_sepia(rgb_image)
         vintage_image = self._add_warm_tint(vintage_image)
         vintage_image = self._reduce_contrast(vintage_image, contrast=0.82)
         vintage_image = self._fade_image(vintage_image, fade_amount=0.16)

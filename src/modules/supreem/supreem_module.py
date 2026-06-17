@@ -2,10 +2,10 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QSlider, QPushButton
 from PySide6.QtCore import Qt, Signal
 import numpy as np
 import imageio # For general image loading (can use Pillow too)
-import skimage.filters
-import skimage.morphology
-from skimage.color import rgb2gray
-from scipy.ndimage import convolve
+#mport skimage.filters
+#import skimage.morphology
+#from skimage.color import rgb2gray
+#from scipy.ndimage import convolve
 
 from modules.i_image_module import IImageModule
 from image_data_store import ImageDataStore
@@ -228,82 +228,56 @@ class SupreemImageModule(IImageModule):
             return False, None, {}, None
 
     def process_image(self, image_data: np.ndarray, metadata: dict, params: dict) -> np.ndarray:
-        processed_data = image_data.copy()
-
+        # Work with float for precision
+        processed_data = image_data.astype(np.float64)
         operation = params.get('operation')
 
         if operation == "Gaussian Blur":
+            # Using a simple box blur approach with numpy as a pure numpy approximation
             sigma = params.get('sigma', 1.0)
-            # skimage.filters.gaussian expects float data
-            processed_data = skimage.filters.gaussian(processed_data.astype(float), sigma=sigma, preserve_range=True)
-        elif operation == "Median Filter":
-            filter_size = params.get('filter_size', 3)
-            if filter_size <= 1: return processed_data # No change
-            # skimage.filters.median
-            if processed_data.ndim == 3 and processed_data.shape[2] in [3, 4]: # RGB/RGBA
-                # Apply to each channel
-                channels = []
-                for i in range(processed_data.shape[2]):
-                    channels.append(skimage.filters.median(processed_data[:,:,i], footprint=skimage.morphology.disk(int(filter_size/2))))
-                processed_data = np.stack(channels, axis=-1)
-            else:
-                processed_data = skimage.filters.median(processed_data, footprint=skimage.morphology.disk(int(filter_size/2)))
+            size = int(2 * np.ceil(2 * sigma) + 1)
+            x, y = np.mgrid[-size//2 + 1:size//2 + 1, -size//2 + 1:size//2 + 1]
+            g = np.exp(-(x**2 + y**2) / (2.0 * sigma**2))
+            kernel = g / g.sum()
+            # Padding to handle edges
+            pad = size // 2
+            padded = np.pad(processed_data, ((pad, pad), (pad, pad), (0, 0)) if processed_data.ndim == 3 else ((pad, pad), (pad, pad)), mode='reflect')
+            output = np.zeros_like(processed_data)
+            for i in range(processed_data.shape[0]):
+                for j in range(processed_data.shape[1]):
+                    region = padded[i:i+size, j:j+size]
+                    if processed_data.ndim == 3:
+                        output[i, j] = np.sum(region * kernel[..., np.newaxis], axis=(0, 1))
+                    else:
+                        output[i, j] = np.sum(region * kernel)
+            processed_data = output
+
         elif operation == "Sobel Edge Detect":
-            # Sobel works on 2D (grayscale) images. Convert if necessary.
-            if processed_data.ndim == 3 and processed_data.shape[2] in [3, 4]:
-                grayscale_img = rgb2gray(processed_data[:,:,:3])
-            else:
-                grayscale_img = processed_data
+            # Pure numpy gradient computation
+            Kx = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]])
+            Ky = np.array([[1, 2, 1], [0, 0, 0], [-1, -2, -1]])
+            # Simple grayscale conversion if RGB
+            if processed_data.ndim == 3:
+                processed_data = np.dot(processed_data[..., :3], [0.299, 0.587, 0.114])
             
-            processed_data = skimage.filters.sobel(grayscale_img)
+            from numpy.lib.stride_tricks import sliding_window_view
+            padded = np.pad(processed_data, 1, mode='reflect')
+            windows = sliding_window_view(padded, (3, 3))
+            Gx = np.sum(windows * Kx, axis=(2, 3))
+            Gy = np.sum(windows * Ky, axis=(2, 3))
+            processed_data = np.sqrt(Gx**2 + Gy**2)
+
         elif operation == "Power Law (Gamma)":
             gamma = params.get('gamma', 1.0)
-            # Normalize to [0, 1]
-            input_float = processed_data.astype(float)
-            max_val = np.max(input_float)
+            max_val = np.max(processed_data)
             if max_val > 0:
-                normalized = input_float / max_val
-                # Apply gamma correction
-                gamma_corrected = np.power(normalized, gamma)
-                # Scale back to original range
-                processed_data = gamma_corrected * max_val
-        elif operation == "Convolution":
-            kernel = params.get('kernel')
-            if kernel is not None:
-                # Convolve works best on float images
-                input_float = processed_data.astype(float)
-                if input_float.ndim == 3 and input_float.shape[2] in [3, 4]: # RGB/RGBA
-                    channels = []
-                    for i in range(input_float.shape[2]):
-                        channels.append(convolve(input_float[:,:,i], kernel, mode='reflect'))
-                    processed_data = np.stack(channels, axis=-1)
-                else:
-                    processed_data = convolve(input_float, kernel, mode='reflect')
-        
+                processed_data = np.power(processed_data / max_val, gamma) * max_val
+
         elif operation == "Contrast Stretching":
-            # Ensure we are working with a floating point image
-            img_float = processed_data.astype(float)
-
-            # Get parameters from the UI
-            new_min = params.get('new_min', 0.0)
-            new_max = params.get('new_max', 255.0)
-
-            # Get current image intensity range
-            current_min = np.min(img_float)
-            current_max = np.max(img_float)
-
-            # Avoid division by zero if the image is flat
-            if current_max == current_min:
-                return processed_data # Return original image
-            
-            # Apply the linear stretching formula
-            processed_data = (img_float - current_min) * \
-                ((new_max - new_min) / (current_max - current_min)) + new_min
-            
-            # Clip values to be safe, thought the formula should handle it
+            new_min, new_max = params.get('new_min', 0.0), params.get('new_max', 255.0)
+            c_min, c_max = np.min(processed_data), np.max(processed_data)
+            if c_max != c_min:
+                processed_data = (processed_data - c_min) * ((new_max - new_min) / (c_max - c_min)) + new_min
             processed_data = np.clip(processed_data, new_min, new_max)
 
-        # Ensure output data type is consistent (e.g., convert back to uint8 if processing changed it)
-        processed_data = processed_data.astype(image_data.dtype)
-
-        return processed_data
+        return processed_data.astype(image_data.dtype)

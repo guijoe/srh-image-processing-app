@@ -1,6 +1,7 @@
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider, QPushButton, QComboBox, QStackedWidget, QDoubleSpinBox, QSpinBox, QGridLayout
 from PySide6.QtCore import Qt, Signal
 import numpy as np
+from numpy.lib.stride_tricks import as_strided
 import imageio  # For general image loading
 
 from modules.i_image_module import IImageModule
@@ -50,25 +51,36 @@ def _convolve2d(image: np.ndarray, kernel: np.ndarray) -> np.ndarray:
 
 
 def _median_filter_2d(image: np.ndarray, kernel_size: int) -> np.ndarray:
-    """Median filter – pure sliding-window implementation.
+    """Vectorised median filter using np.lib.stride_tricks.as_strided.
 
     Output(x, y) = median({ Input(x+i, y+j) | -k ≤ i, j ≤ k })
     where k = kernel_size // 2.
+
+    Instead of a Python double-loop, as_strided creates a *view* of the
+    padded image with shape (rows, cols, kernel_size, kernel_size) so that
+    every sliding-window neighbourhood is accessible along the last two
+    axes.  np.median then operates along those axes in a single vectorised
+    call, avoiding per-pixel Python overhead.
     """
     img = image.astype(np.float64)
     k = kernel_size // 2
     rows, cols = img.shape
 
-    # Zero-pad
+    # Zero-pad the borders so the kernel always fits
     padded = np.pad(img, ((k, k), (k, k)), mode='constant')
-    output = np.zeros_like(img, dtype=np.float64)
 
-    for x in range(rows):
-        for y in range(cols):
-            neighbourhood = padded[x:x + kernel_size, y:y + kernel_size]
-            output[x, y] = np.median(neighbourhood)
+    # Build a 4-D view: (rows, cols, kernel_size, kernel_size)
+    # Each (i, j) entry is the kernel_size × kernel_size neighbourhood
+    # centred on pixel (i, j) of the original image.
+    s0, s1 = padded.strides                       # byte strides of padded
+    windows = as_strided(
+        padded,
+        shape=(rows, cols, kernel_size, kernel_size),
+        strides=(s0, s1, s0, s1),
+    )
 
-    return output
+    # Compute the median across the two kernel axes (axes 2 & 3)
+    return np.median(windows, axis=(2, 3))
 
 
 def _build_gaussian_kernel(sigma: float, size: int = None) -> np.ndarray:
@@ -453,7 +465,7 @@ class KushagraImageModule(IImageModule):
                 processed_data = output
 
         # ------------------------------------------------------------------ #
-        # 4. Median Filter (Denoising) – pure sliding-window
+        # 4. Median Filter (Denoising) – vectorised via as_strided
         #    Output(x,y) = median({ Input(x+i, y+j) | -k ≤ i,j ≤ k })
         # ------------------------------------------------------------------ #
         elif operation == "Median Filter":
@@ -473,7 +485,7 @@ class KushagraImageModule(IImageModule):
                 processed_data = _median_filter_2d(processed_data, filter_size)
 
         # ------------------------------------------------------------------ #
-        # 6. Fourier Transform Edge Detection (spatial → spectral → spatial)
+        # 5. Fourier Transform Edge Detection (spatial → spectral → spatial)
         #    F(u,v) = Σ_x Σ_y f(x,y)·exp(-j·2π·(ux/M + vy/N))
         #
         #    Uses np.fft.fft2 / np.fft.ifft2 (Cooley-Tukey FFT) which
@@ -524,8 +536,8 @@ class KushagraImageModule(IImageModule):
             processed_data = cropped
 
         # ------------------------------------------------------------------ #
-        #  Gaussian Blur – pure-math spatial convolution
-        #  G(x,y) = (1/(2πσ²))·exp(-(x²+y²)/(2σ²))
+        # 6. Gaussian Blur – spatial convolution with Gaussian kernel
+        #    G(x,y) = (1/(2πσ²))·exp(-(x²+y²)/(2σ²))
         # ------------------------------------------------------------------ #
         elif operation == "Gaussian Blur":
             sigma = params.get('sigma', 1.0)

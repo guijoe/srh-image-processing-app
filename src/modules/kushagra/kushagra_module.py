@@ -686,6 +686,19 @@ class KushagraImageModule(IImageModule):
             input_float = input_float * (1.0 + saturation / 100.0)
             processed_data = np.clip(input_float, 0, max_val)
 
+        # ------------------------------------------------------------------ #
+        # Ensure output dimensions match input dimensions
+        # (Napari crashes if a 3D layer is updated with 2D data in-place)
+        # ------------------------------------------------------------------ #
+        if image_data.ndim == 3 and processed_data.ndim == 2:
+            num_channels = image_data.shape[2]
+            # Copy grayscale data into R, G, B
+            channels = [processed_data] * min(3, num_channels)
+            # If original had an alpha channel, preserve it
+            if num_channels == 4:
+                channels.append(image_data[:, :, 3].astype(np.float64))
+            processed_data = np.stack(channels, axis=-1)
+
         # Ensure output data type is consistent
         processed_data = processed_data.astype(image_data.dtype)
 

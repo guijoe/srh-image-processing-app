@@ -116,7 +116,7 @@ class ardyoImageModule(IImageModule):
     # ---------------------------------------------------------
     # Vintage Film Look helper functions
     # ---------------------------------------------------------
-
+    # apply sepia
     def _apply_sepia(self, image_array):
         input_float = image_array.astype(np.float32)
 

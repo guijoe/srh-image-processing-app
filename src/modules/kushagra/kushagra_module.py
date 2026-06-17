@@ -90,67 +90,26 @@ def _build_gaussian_kernel(sigma: float, size: int = None) -> np.ndarray:
 
 
 def _dft2d(image: np.ndarray) -> np.ndarray:
-    """Compute the 2-D Discrete Fourier Transform using the definition:
+    """Compute the 2-D Discrete Fourier Transform.
 
         F(u, v) = Σ_{x=0}^{M-1} Σ_{y=0}^{N-1}
                       f(x, y) · exp( -j·2π·(u·x/M + v·y/N) )
 
-    This is the direct (slow) O(M·N·M·N) implementation for clarity.
-    A separable optimisation is used: first transform rows, then columns.
+    Uses numpy's FFT (Cooley-Tukey algorithm) which computes the same
+    mathematical transform in O(MN·log(MN)) instead of O(M²N²).
     """
-    f = image.astype(np.float64)
-    M, N = f.shape
-
-    # --- Row-wise 1-D DFT ---------------------------------------------------
-    row_transformed = np.zeros((M, N), dtype=np.complex128)
-    for x in range(M):
-        for v in range(N):
-            sumval = 0.0 + 0.0j
-            for y in range(N):
-                sumval += f[x, y] * np.exp(-1j * 2 * np.pi * v * y / N)
-            row_transformed[x, v] = sumval
-
-    # --- Column-wise 1-D DFT on the row-transformed result ------------------
-    F = np.zeros((M, N), dtype=np.complex128)
-    for u in range(M):
-        for v in range(N):
-            sumval = 0.0 + 0.0j
-            for x in range(M):
-                sumval += row_transformed[x, v] * np.exp(-1j * 2 * np.pi * u * x / M)
-            F[u, v] = sumval
-
-    return F
+    return np.fft.fft2(image.astype(np.float64))
 
 
 def _idft2d(F: np.ndarray) -> np.ndarray:
-    """Compute the 2-D Inverse Discrete Fourier Transform:
+    """Compute the 2-D Inverse Discrete Fourier Transform.
 
         f(x, y) = (1/(M·N)) Σ_{u=0}^{M-1} Σ_{v=0}^{N-1}
                       F(u, v) · exp( +j·2π·(u·x/M + v·y/N) )
 
-    Separable row-then-column approach, matching _dft2d.
+    Uses numpy's inverse FFT for the same mathematical result.
     """
-    M, N = F.shape
-
-    # --- Row-wise 1-D IDFT --------------------------------------------------
-    row_inv = np.zeros((M, N), dtype=np.complex128)
-    for x in range(M):
-        for y in range(N):
-            sumval = 0.0 + 0.0j
-            for v in range(N):
-                sumval += F[x, v] * np.exp(1j * 2 * np.pi * v * y / N)
-            row_inv[x, y] = sumval / N
-
-    # --- Column-wise 1-D IDFT -----------------------------------------------
-    f = np.zeros((M, N), dtype=np.complex128)
-    for x in range(M):
-        for y in range(N):
-            sumval = 0.0 + 0.0j
-            for u in range(M):
-                sumval += row_inv[u, y] * np.exp(1j * 2 * np.pi * u * x / M)
-            f[x, y] = sumval / M
-
-    return f
+    return np.fft.ifft2(F)
 
 # --- Parameter Widgets for Different Operations ---
 class BaseParamsWidget(QWidget):
@@ -206,35 +165,6 @@ class PowerLawParamsWidget(BaseParamsWidget):
 
     def get_params(self) -> dict:
         return {'gamma': self.gamma_spinbox.value()}
-
-class ConvolutionParamsWidget(BaseParamsWidget):
-    """A widget for defining a 3x3 convolution kernel."""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(QLabel("3x3 Kernel:"))
-        
-        grid_layout = QGridLayout()
-        self.kernel_inputs = []
-        for r in range(3):
-            row_inputs = []
-            for c in range(3):
-                spinbox = QDoubleSpinBox()
-                spinbox.setMinimum(-100.0)
-                spinbox.setMaximum(100.0)
-                spinbox.setValue(0.0)
-                # Set center to 1.0 for an identity-like default
-                if r == 1 and c == 1:
-                    spinbox.setValue(1.0)
-                grid_layout.addWidget(spinbox, r, c)
-                row_inputs.append(spinbox)
-            self.kernel_inputs.append(row_inputs)
-        layout.addLayout(grid_layout)
-
-    def get_params(self) -> dict:
-        kernel = np.array([[spinbox.value() for spinbox in row] for row in self.kernel_inputs])
-        return {'kernel': kernel}
 
 class NoiseGenerationParamsWidget(BaseParamsWidget):
     """A widget for generating noise."""
@@ -352,44 +282,6 @@ class FourierEdgeDetectParamsWidget(BaseParamsWidget):
         return {'cutoff_radius': self.radius_spinbox.value()}
 
 
-class DeepfryParamsWidget(BaseParamsWidget):
-    """a widget for deep fried images filter"""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(QLabel("Deepfry Parameters:"))
-        
-        self.contrast_spinbox = QDoubleSpinBox()
-        self.contrast_spinbox.setMinimum(-100.0)
-        self.contrast_spinbox.setMaximum(100.0)
-        self.contrast_spinbox.setValue(50.0)
-        self.contrast_spinbox.setSingleStep(0.1)
-        layout.addWidget(self.contrast_spinbox)
-        
-        self.saturation_spinbox = QDoubleSpinBox()
-        self.saturation_spinbox.setMinimum(-100.0)
-        self.saturation_spinbox.setMaximum(100.0)
-        self.saturation_spinbox.setValue(50.0)
-        self.saturation_spinbox.setSingleStep(0.1)
-        layout.addWidget(self.saturation_spinbox)
-        
-        self.exposure_spinbox = QDoubleSpinBox()
-        self.exposure_spinbox.setMinimum(-100.0)
-        self.exposure_spinbox.setMaximum(100.0)
-        self.exposure_spinbox.setValue(50.0)
-        self.exposure_spinbox.setSingleStep(0.1)
-        layout.addWidget(self.exposure_spinbox)
-        
-        layout.addStretch()
-        
-    def get_params(self) -> dict:
-        return {
-            'contrast': self.contrast_spinbox.value(),
-            'saturation': self.saturation_spinbox.value(),
-            'exposure': self.exposure_spinbox.value()
-        }
-
 # Define a custom control widget
 class KushagraControlsWidget(QWidget):
     # Signal to request processing from the module manager
@@ -419,11 +311,9 @@ class KushagraControlsWidget(QWidget):
             "Sobel Edge Detect": NoParamsWidget,
             "Power Law (Gamma)": PowerLawParamsWidget,
             "Median Filter": MedianFilterParamsWidget,
-            "Convolution (Blur)": ConvolutionParamsWidget,
             "Fourier Edge Detect": FourierEdgeDetectParamsWidget,
             "Gaussian Blur": GaussianParamsWidget,
             "Noise Generation": NoiseGenerationParamsWidget,
-            "Deep Fry": DeepfryParamsWidget,
         }
 
         for name, widget_class in operations.items():
@@ -583,33 +473,18 @@ class KushagraImageModule(IImageModule):
                 processed_data = _median_filter_2d(processed_data, filter_size)
 
         # ------------------------------------------------------------------ #
-        # 5. Convolution (Blur) – user-defined 3×3 kernel
-        #    Uses the pure-math _convolve2d helper.
-        # ------------------------------------------------------------------ #
-        elif operation == "Convolution (Blur)":
-            kernel = params.get('kernel')
-            if kernel is not None:
-                input_float = processed_data.astype(np.float64)
-                if input_float.ndim == 3 and input_float.shape[2] in [3, 4]:
-                    channels = []
-                    for ch in range(input_float.shape[2]):
-                        channels.append(
-                            _convolve2d(input_float[:, :, ch], kernel)
-                        )
-                    processed_data = np.stack(channels, axis=-1)
-                else:
-                    processed_data = _convolve2d(input_float, kernel)
-
-        # ------------------------------------------------------------------ #
         # 6. Fourier Transform Edge Detection (spatial → spectral → spatial)
         #    F(u,v) = Σ_x Σ_y f(x,y)·exp(-j·2π·(ux/M + vy/N))
+        #
+        #    Uses np.fft.fft2 / np.fft.ifft2 (Cooley-Tukey FFT) which
+        #    computes the same DFT summation in O(MN·log(MN)).
         #
         #    Steps:
         #      a) Convert to grayscale
         #      b) Zero-pad to 3× the image size (image placed at centre)
-        #      c) Compute DFT with the explicit summation formula
+        #      c) Compute 2-D FFT (forward DFT)
         #      d) Apply circular high-pass mask (zero inside cutoff radius)
-        #      e) Inverse DFT back to spatial domain
+        #      e) Inverse FFT back to spatial domain
         #      f) Crop the result back to the original image size
         # ------------------------------------------------------------------ #
         elif operation == "Fourier Edge Detect":
@@ -625,8 +500,8 @@ class KushagraImageModule(IImageModule):
             start_r, start_c = orig_rows, orig_cols   # top-left of centre block
             padded[start_r:start_r + orig_rows, start_c:start_c + orig_cols] = gray
 
-            # (c) Forward DFT  (explicit summation – see _dft2d)
-            F = _dft2d(padded)
+            # (c) Forward 2-D FFT
+            F = np.fft.fft2(padded)
 
             # (d) High-pass mask in frequency domain
             crow, ccol = pad_rows // 2, pad_cols // 2
@@ -640,8 +515,8 @@ class KushagraImageModule(IImageModule):
             F_filtered = F_shifted * mask
             F_unshifted = np.fft.ifftshift(F_filtered)
 
-            # (e) Inverse DFT
-            spatial = _idft2d(F_unshifted)
+            # (e) Inverse 2-D FFT
+            spatial = np.fft.ifft2(F_unshifted)
 
             # (f) Crop back to the original image region and take magnitude
             cropped = np.abs(spatial[start_r:start_r + orig_rows,
@@ -664,27 +539,6 @@ class KushagraImageModule(IImageModule):
                 processed_data = np.stack(channels, axis=-1)
             else:
                 processed_data = _convolve2d(input_float, g_kernel)
-
-        # ------------------------------------------------------------------ #
-        #  Deep Fry filter
-        # ------------------------------------------------------------------ #
-        elif operation == "Deep Fry":
-            contrast = params.get('contrast', 50.0)
-            saturation = params.get('saturation', 50.0)
-            exposure = params.get('exposure', 50.0)
-            input_float = processed_data.astype(np.float64)
-            if np.issubdtype(image_data.dtype, np.integer):
-                max_val = float(np.iinfo(image_data.dtype).max)
-            else:
-                max_val = 1.0
-            # Exposure boost
-            input_float = input_float * (1.0 + exposure / 100.0)
-            # Contrast stretch around midpoint
-            mid = max_val / 2.0
-            input_float = (input_float - mid) * (1.0 + contrast / 100.0) + mid
-            # Saturation boost (multiply colour channels)
-            input_float = input_float * (1.0 + saturation / 100.0)
-            processed_data = np.clip(input_float, 0, max_val)
 
         # ------------------------------------------------------------------ #
         # Ensure output dimensions match input dimensions

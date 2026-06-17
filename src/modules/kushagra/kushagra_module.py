@@ -500,6 +500,30 @@ class KushagraImageModule(IImageModule):
                                      start_c:start_c + orig_cols])
             processed_data = cropped
 
+        # ------------------------------------------------------------------ #
+        # 6. Noise Generation – additive Gaussian noise
+        #    Output(x, y) = Input(x, y) + N(μ, σ)
+        #    where N(μ, σ) is a random sample drawn from the normal
+        #    (Gaussian) distribution with mean μ and standard deviation σ.
+        # ------------------------------------------------------------------ #
+        elif operation == "Noise Generation":
+            mean = params.get('mean', 0.0)
+            std_dev = params.get('std_dev', 0.1)
+
+            input_float = processed_data.astype(np.float64)
+
+            # Determine the valid range for clamping
+            if np.issubdtype(image_data.dtype, np.integer):
+                max_val = float(np.iinfo(image_data.dtype).max)
+            else:
+                max_val = 1.0
+
+            # Generate Gaussian noise with the same shape as the image
+            noise = np.random.normal(loc=mean, scale=std_dev, size=input_float.shape)
+
+            # Add noise and clamp to the valid pixel range
+            noisy = input_float + noise
+            processed_data = np.clip(noisy, 0, max_val)
 
         # ------------------------------------------------------------------ #
         # Ensure output dimensions match input dimensions

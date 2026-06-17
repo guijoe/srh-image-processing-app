@@ -83,22 +83,6 @@ def _median_filter_2d(image: np.ndarray, kernel_size: int) -> np.ndarray:
     return np.median(windows, axis=(2, 3))
 
 
-def _build_gaussian_kernel(sigma: float, size: int = None) -> np.ndarray:
-    """Build a 2-D Gaussian kernel from the formula:
-
-        G(x, y) = (1 / (2·π·σ²)) · exp( -(x² + y²) / (2·σ²) )
-
-    *size* defaults to 6·σ + 1 (rounded to the nearest odd integer) so
-    that the kernel captures ±3σ.
-    """
-    if size is None:
-        size = int(np.ceil(6 * sigma)) | 1          # ensure odd
-    half = size // 2
-    ax = np.arange(-half, half + 1, dtype=np.float64)
-    xx, yy = np.meshgrid(ax, ax)
-    kernel = (1.0 / (2.0 * np.pi * sigma ** 2)) * np.exp(-(xx ** 2 + yy ** 2) / (2.0 * sigma ** 2))
-    kernel /= kernel.sum()   # normalise so pixel brightness is preserved
-    return kernel
 
 
 def _dft2d(image: np.ndarray) -> np.ndarray:
@@ -141,24 +125,6 @@ class NoParamsWidget(BaseParamsWidget):
 
     def get_params(self) -> dict:
         return {}
-
-class GaussianParamsWidget(BaseParamsWidget):
-    """A widget for Gaussian blur parameters."""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(QLabel("Sigma (Standard Deviation):"))
-        self.sigma_spinbox = QDoubleSpinBox()
-        self.sigma_spinbox.setMinimum(0.1)
-        self.sigma_spinbox.setMaximum(25.0)
-        self.sigma_spinbox.setValue(1.0)
-        self.sigma_spinbox.setSingleStep(0.1)
-        layout.addWidget(self.sigma_spinbox)
-        layout.addStretch()
-
-    def get_params(self) -> dict:
-        return {'sigma': self.sigma_spinbox.value()}
 
 class PowerLawParamsWidget(BaseParamsWidget):
     """A widget for Power Law (Gamma) Transformation."""
@@ -324,7 +290,6 @@ class KushagraControlsWidget(QWidget):
             "Power Law (Gamma)": PowerLawParamsWidget,
             "Median Filter": MedianFilterParamsWidget,
             "Fourier Edge Detect": FourierEdgeDetectParamsWidget,
-            "Gaussian Blur": GaussianParamsWidget,
             "Noise Generation": NoiseGenerationParamsWidget,
         }
 
@@ -535,22 +500,6 @@ class KushagraImageModule(IImageModule):
                                      start_c:start_c + orig_cols])
             processed_data = cropped
 
-        # ------------------------------------------------------------------ #
-        # 6. Gaussian Blur – spatial convolution with Gaussian kernel
-        #    G(x,y) = (1/(2πσ²))·exp(-(x²+y²)/(2σ²))
-        # ------------------------------------------------------------------ #
-        elif operation == "Gaussian Blur":
-            sigma = params.get('sigma', 1.0)
-            g_kernel = _build_gaussian_kernel(sigma)
-
-            input_float = processed_data.astype(np.float64)
-            if input_float.ndim == 3 and input_float.shape[2] in [3, 4]:
-                channels = []
-                for ch in range(input_float.shape[2]):
-                    channels.append(_convolve2d(input_float[:, :, ch], g_kernel))
-                processed_data = np.stack(channels, axis=-1)
-            else:
-                processed_data = _convolve2d(input_float, g_kernel)
 
         # ------------------------------------------------------------------ #
         # Ensure output dimensions match input dimensions

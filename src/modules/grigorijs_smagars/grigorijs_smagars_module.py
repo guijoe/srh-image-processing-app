@@ -157,6 +157,7 @@ class DrosteWidget(BaseParamsWidget):
             return {'scale': self.scale_spinbox.value(),
                     'iterations': self.iteration_spinbox.value()}
         
+        
 class SelectiveBlurWidget(BaseParamsWidget):
         def __init__(self, parent=None):
             super().__init__(parent)
@@ -382,7 +383,7 @@ class GrigorijsImageModule(IImageModule):
                 # Shift rows left/right using sine wave
                 shift_x = amplitude * np.sin(2 * np.pi * y / wavelength)
 
-                x_src = x - shift_x
+                x_src = x - shift_x 
                 y_src = y
 
             else:
